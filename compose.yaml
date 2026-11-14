@@ -154,6 +154,7 @@ services:
 
   postgres:
     <<: *service
+    stop_signal: SIGINT
     image: postgres:${POSTGRES_VERSION:?Set POSTGRES_VERSION in .env}
     profiles: [postgres]
     environment:
@@ -166,7 +167,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
       interval: 10s
       timeout: 5s
       retries: 12
