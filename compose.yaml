@@ -1,0 +1,176 @@
+# Settings and commands: aeolus-fleet docs/guide/self-host.md,
+# docs/guide/run-the-server.md and each published package's README.
+x-service: &service
+  restart: unless-stopped
+  stop_signal: SIGTERM
+  stop_grace_period: 30s
+
+services:
+  core:
+    <<: *service
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    build:
+      context: .
+      args:
+        NODE_VERSION: ${NODE_VERSION:?Set NODE_VERSION in .env}
+        PART: core
+        VERSION: ${CORE_VERSION:?Set CORE_VERSION in .env}
+    command: ["aeolus-core", "start"]
+    ports:
+      - "127.0.0.1:4000:4000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4000"
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+      CONSOLE_ORIGIN: ${CONSOLE_ORIGIN:?Set CONSOLE_ORIGIN in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  console:
+    <<: *service
+    build:
+      context: .
+      args:
+        NODE_VERSION: ${NODE_VERSION:?Set NODE_VERSION in .env}
+        PART: console
+        VERSION: ${CONSOLE_VERSION:?Set CONSOLE_VERSION in .env}
+    command: ["aeolus-console", "start"]
+    depends_on:
+      core:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      AEOLUS_SERVER_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+      AEOLUS_SERVER_INTERNAL_URL: http://core:4000
+      AEOLUS_CONSOLE_URL: ${CONSOLE_ORIGIN:?Set CONSOLE_ORIGIN in .env}
+      AEOLUS_SQUADRONS_URL: ${AEOLUS_SQUADRONS_URL:-}
+      AEOLUS_TRIERARCH_PLUGIN_URL: ${AEOLUS_TRIERARCH_PLUGIN_URL:-}
+      AEOLUS_GATEWAY_URL: ${AEOLUS_GATEWAY_URL:-}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  squadrons:
+    <<: *service
+    build:
+      context: .
+      args:
+        NODE_VERSION: ${NODE_VERSION:?Set NODE_VERSION in .env}
+        PART: squadrons
+        VERSION: ${SQUADRONS_VERSION:?Set SQUADRONS_VERSION in .env}
+    command: ["aeolus-squadrons", "start"]
+    profiles: [squadrons]
+    container_name: ${COMPOSE_PROJECT_NAME:-aeolus-selfhost}-squadrons
+    scale: 1
+    depends_on:
+      core:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4100:4100"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4100"
+      DATABASE_URL: ${SQUADRONS_DATABASE_URL:-}
+      FLEET_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4100/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  trierarch-plugin:
+    <<: *service
+    build:
+      context: .
+      args:
+        NODE_VERSION: ${NODE_VERSION:?Set NODE_VERSION in .env}
+        PART: trierarch-plugin
+        VERSION: ${TRIERARCH_PLUGIN_VERSION:?Set TRIERARCH_PLUGIN_VERSION in .env}
+    command: ["aeolus-trierarch-plugin", "start"]
+    profiles: [trierarch-plugin]
+    container_name: ${COMPOSE_PROJECT_NAME:-aeolus-selfhost}-trierarch-plugin
+    scale: 1
+    depends_on:
+      core:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4200:4200"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4200"
+      DATABASE_URL: ${TRIERARCH_PLUGIN_DATABASE_URL:-}
+      FLEET_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+      CONSOLE_ORIGIN: ${CONSOLE_ORIGIN:?Set CONSOLE_ORIGIN in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4200/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  gateway:
+    <<: *service
+    build:
+      context: .
+      args:
+        NODE_VERSION: ${NODE_VERSION:?Set NODE_VERSION in .env}
+        PART: gateway
+        VERSION: ${GATEWAY_VERSION:?Set GATEWAY_VERSION in .env}
+    command: ["aeolus-gateway", "start"]
+    profiles: [gateway]
+    depends_on:
+      core:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4300:4300"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4300"
+      DATABASE_URL: ${GATEWAY_DATABASE_URL:-}
+      FLEET_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+      GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:-http://localhost:4300}
+      GATEWAY_SECRET: ${GATEWAY_SECRET:-}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4300/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  postgres:
+    <<: *service
+    image: postgres:${POSTGRES_VERSION:?Set POSTGRES_VERSION in .env}
+    profiles: [postgres]
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      CORE_DB_PASSWORD: ${CORE_DB_PASSWORD:-}
+      SQUADRONS_DB_PASSWORD: ${SQUADRONS_DB_PASSWORD:-}
+      TRIERARCH_PLUGIN_DB_PASSWORD: ${TRIERARCH_PLUGIN_DB_PASSWORD:-}
+      GATEWAY_DB_PASSWORD: ${GATEWAY_DB_PASSWORD:-}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  postgres-data:
