@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "skills": {
+    "behaviour-driven-development": {
+      "source": "ThomasHendrickx/skills",
+      "ref": "v3.14.0",
+      "sourceType": "github",
+      "skillPath": "skills/behaviour-driven-development/SKILL.md",
+      "computedHash": "17837748ea94da9bb7596e6d350b20eaf48e566cc441976d90d9fc32ca517416"
+    },
+    "code-review": {
+      "source": "ThomasHendrickx/skills",
+      "ref": "v3.14.0",
+      "sourceType": "github",
+      "skillPath": "skills/code-review/SKILL.md",
+      "computedHash": "e107027b0358afe98be8a1025ce2467573c62ddd1601fdcd54c201ad631c0c7e"
+    },
+    "pull-request": {
+      "source": "ThomasHendrickx/skills",
+      "ref": "v3.14.0",
+      "sourceType": "github",
+      "skillPath": "skills/pull-request/SKILL.md",
+      "computedHash": "9787083219cd0248c5bc6a117120e021268dc688acea4bef7eb3596d71193a55"
+    },
+    "software-development": {
+      "source": "ThomasHendrickx/skills",
+      "ref": "v3.14.0",
+      "sourceType": "github",
+      "skillPath": "skills/software-development/SKILL.md",
+      "computedHash": "68eea63b78d52942ad3ce26dfbb0986f977e8e9436ded320af39086cdf9b9266"
+    },
+    "writing-for-agents": {
+      "source": "ThomasHendrickx/skills",
+      "ref": "v3.14.0",
+      "sourceType": "github",
+      "skillPath": "skills/writing-for-agents/SKILL.md",
+      "computedHash": "10a1e2c3991be255508ed40fe5cefed7bf6ec54beb186d2030fef169a7971bc0"
+    }
+  }
+}
