@@ -36,7 +36,9 @@ writeFileSync('opened-link', process.argv[2]);
       child.stdout.on('data', data => { output += data; });
       child.stderr.on('data', data => { output += data; });
       child.stdin.end(input);
+      const timer = setTimeout(() => child.kill(), 5000);
       const code = await new Promise(resolve => child.on('close', resolve));
+      clearTimeout(timer);
       return { code, output };
     },
     async settings() { return parseEnv(await readFile(join(path, '.env'), 'utf8')); },
@@ -44,25 +46,49 @@ writeFileSync('opened-link', process.argv[2]);
   };
 }
 
-test('init accepts Enter defaults or --yes without printing generated secrets', async t => {
-  for (const args of [[], ['--yes']]) {
-    // Given a fresh folder and the approved defaults.
-    const folder = await aFolder(t);
-    // When init accepts Enter or --yes.
-    const result = await folder.run(['init', ...args], '\n\n\n\n');
-    // Then the chosen profiles and container URLs are recorded, with private secrets.
-    assert.equal(result.code, 0, result.output);
-    const env = await folder.settings();
-    assert.equal(env.COMPOSE_PROFILES, 'postgres,squadrons,trierarch-plugin');
-    assert.match(env.DATABASE_URL, /^postgresql:\/\/aeolus:[^@]+@postgres:5432\/aeolus$/);
-    assert.equal(env.AEOLUS_SQUADRONS_URL, 'http://squadrons:4100');
-    assert.equal(env.AEOLUS_TRIERARCH_PLUGIN_URL, 'http://trierarch-plugin:4200');
-    assert.equal(env.AEOLUS_GATEWAY_URL, '');
-    for (const key of ['POSTGRES_PASSWORD', 'CORE_DB_PASSWORD', 'SQUADRONS_DB_PASSWORD', 'TRIERARCH_PLUGIN_DB_PASSWORD', 'GATEWAY_DB_PASSWORD']) {
-      assert.ok(env[key].length >= 32);
-      assert.ok(!result.output.includes(env[key]));
-    }
+for (const [name, args] of [['Enter', []], ['--yes', ['--yes']]]) test(`init accepts ${name} defaults without printing generated secrets`, async t => {
+  // Given a fresh folder and the approved defaults.
+  const folder = await aFolder(t);
+  // When init accepts the defaults.
+  const result = await folder.run(['init', ...args], '\n\n\n\n');
+  // Then the chosen profiles and container URLs are recorded, with private secrets.
+  assert.equal(result.code, 0, result.output);
+  const env = await folder.settings();
+  assert.equal(env.COMPOSE_PROFILES, 'postgres,squadrons,trierarch-plugin');
+  assert.match(env.DATABASE_URL, /^postgresql:\/\/aeolus:[^@]+@postgres:5432\/aeolus$/);
+  assert.equal(env.AEOLUS_SQUADRONS_URL, 'http://squadrons:4100');
+  assert.equal(env.AEOLUS_TRIERARCH_PLUGIN_URL, 'http://trierarch-plugin:4200');
+  assert.equal(env.AEOLUS_GATEWAY_URL, '');
+  for (const key of ['POSTGRES_PASSWORD', 'CORE_DB_PASSWORD', 'SQUADRONS_DB_PASSWORD', 'TRIERARCH_PLUGIN_DB_PASSWORD', 'GATEWAY_DB_PASSWORD']) {
+    assert.ok(env[key].length >= 32);
+    assert.ok(!result.output.includes(env[key]));
   }
+});
+
+for (const [name, args, input] of [['Enter', [], '\n\n\n\n'], ['--yes', ['--yes'], '']]) test(`init treats a .env without COMPOSE_PROFILES as new and takes the approved defaults on ${name}`, async t => {
+  // Given a .env copied from .env.example, as the old README said, holding one secret.
+  const folder = await aFolder(t);
+  await writeFile(join(folder.path, '.env'), (await readFile('.env.example', 'utf8')).replace('CORE_DB_PASSWORD=', 'CORE_DB_PASSWORD=kept-secret'));
+  // When init accepts the defaults.
+  const result = await folder.run(['init', ...args], input);
+  // Then it finishes with Postgres in the folder, squadrons and the trierarch plugin on, the gateway off, and the secret kept.
+  assert.equal(result.code, 0, result.output);
+  const env = await folder.settings();
+  assert.equal(env.COMPOSE_PROFILES, 'postgres,squadrons,trierarch-plugin');
+  assert.equal(env.CORE_DB_PASSWORD, 'kept-secret');
+  assert.match(env.DATABASE_URL, /^postgresql:\/\/aeolus:kept-secret@postgres:5432\/aeolus$/);
+  assert.equal(env.AEOLUS_GATEWAY_URL, '');
+});
+
+test('init --yes fails instead of waiting when an existing Postgres has no saved URL', async t => {
+  // Given a rerun whose profiles chose an existing Postgres and whose URL is missing.
+  const folder = await aFolder(t);
+  await writeFile(join(folder.path, '.env'), 'COMPOSE_PROFILES=squadrons\nDATABASE_URL=\n');
+  // When init runs with --yes.
+  const result = await folder.run(['init', '--yes']);
+  // Then it stops with an error naming the missing URL.
+  assert.equal(result.code, 1, result.output);
+  assert.match(result.output, /DATABASE_URL/);
 });
 
 test('rerun keeps secrets and custom settings while changing chosen plugins', async t => {
@@ -124,18 +150,27 @@ for (const existing of [false, true]) test(`start ${existing ? 'existing' : 'new
   assert.ok(!commands.some(command => command.includes('sign-in')));
 });
 
-test('sign-in prints a fresh link and stop keeps volumes', async t => {
+test('sign-in prints a fresh link', async t => {
   // Given an initialized folder.
   const folder = await aFolder(t);
   await folder.run(['init', '--yes']);
-  // When sign-in and stop are run.
-  const signIn = await folder.run(['sign-in']);
-  const stop = await folder.run(['stop']);
-  // Then a fresh link is shown and Compose stops without deleting volumes.
-  assert.equal(signIn.code, 0, signIn.output);
-  assert.match(signIn.output, /ticket=one-use/);
-  assert.equal(stop.code, 0, stop.output);
-  assert.deepEqual(await folder.commands(), [['compose', 'exec', '-T', 'core', 'aeolus-core', 'sign-in'], ['compose', 'down']]);
+  // When sign-in is run.
+  const result = await folder.run(['sign-in']);
+  // Then a fresh link is shown.
+  assert.equal(result.code, 0, result.output);
+  assert.match(result.output, /ticket=one-use/);
+  assert.deepEqual(await folder.commands(), [['compose', 'exec', '-T', 'core', 'aeolus-core', 'sign-in']]);
+});
+
+test('stop keeps volumes', async t => {
+  // Given an initialized folder.
+  const folder = await aFolder(t);
+  await folder.run(['init', '--yes']);
+  // When stop is run.
+  const result = await folder.run(['stop']);
+  // Then Compose stops without deleting volumes.
+  assert.equal(result.code, 0, result.output);
+  assert.deepEqual(await folder.commands(), [['compose', 'down']]);
 });
 
 test('start propagates a fleet:init failure without opening a sign-in page', async t => {
@@ -154,24 +189,22 @@ test('start propagates a fleet:init failure without opening a sign-in page', asy
 });
 
 
-test('sign-in opens a browser on a desktop and always prints the link on SSH or headless hosts', async t => {
-  for (const session of [
-    { DISPLAY: ':1', SSH_CONNECTION: '', opens: true },
-    { DISPLAY: ':1', SSH_CONNECTION: 'remote', opens: false },
-    { DISPLAY: '', SSH_CONNECTION: '', opens: false },
-  ]) {
-    // Given an initialized folder on a desktop, SSH session or headless host.
-    const folder = await aFolder(t);
-    await folder.run(['init', '--yes']);
-    // When sign-in issues its link.
-    const result = await folder.run(['sign-in'], '', session);
-    // Then every session sees the link and only the desktop opens a browser.
-    assert.equal(result.code, 0, result.output);
-    assert.match(result.output, /http:\/\/localhost:3000\/sign-in\?ticket=one-use/);
-    await new Promise(resolve => setTimeout(resolve, 200));
-    const opened = await readFile(join(folder.path, 'opened-link'), 'utf8').catch(() => null);
-    assert.equal(opened, session.opens ? 'http://localhost:3000/sign-in?ticket=one-use' : null);
-  }
+for (const [name, session] of [
+  ['a desktop opens a browser', { DISPLAY: ':1', SSH_CONNECTION: '', opens: true }],
+  ['an SSH session only prints the link', { DISPLAY: ':1', SSH_CONNECTION: 'remote', opens: false }],
+  ['a headless host only prints the link', { DISPLAY: '', SSH_CONNECTION: '', opens: false }],
+]) test(`sign-in on ${name}`, async t => {
+  // Given an initialized folder on this kind of session.
+  const folder = await aFolder(t);
+  await folder.run(['init', '--yes']);
+  // When sign-in issues its link.
+  const result = await folder.run(['sign-in'], '', session);
+  // Then the link is printed and only the desktop opens a browser.
+  assert.equal(result.code, 0, result.output);
+  assert.match(result.output, /http:\/\/localhost:3000\/sign-in\?ticket=one-use/);
+  await new Promise(resolve => setTimeout(resolve, 200));
+  const opened = await readFile(join(folder.path, 'opened-link'), 'utf8').catch(() => null);
+  assert.equal(opened, session.opens ? 'http://localhost:3000/sign-in?ticket=one-use' : null);
 });
 
 test('start names the enabled gateway and explains that Bridge waits for self-hosted sign-in', async t => {
