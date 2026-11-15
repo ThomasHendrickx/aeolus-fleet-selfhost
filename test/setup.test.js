@@ -1,0 +1,257 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { spawn } from 'node:child_process';
+import { parseEnv } from 'node:util';
+import { createServer } from 'node:http';
+
+const script = resolve('scripts/setup.js');
+async function aFolder(t) {
+  const path = await mkdtemp(join(tmpdir(), 'aeolus-setup-'));
+  t.after(() => rm(path, { recursive: true, force: true }));
+  await writeFile(join(path, '.env.example'), await readFile('.env.example'));
+  await mkdir(join(path, 'bin'));
+  await writeFile(join(path, 'bin/docker'), `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs';
+appendFileSync('commands', JSON.stringify(process.argv.slice(2)) + '\\n');
+if (process.argv.includes('fleet:init') || process.argv.includes('sign-in')) {
+  if (process.env.INIT_CODE) process.exit(Number(process.env.INIT_CODE));
+  console.log('Open http://localhost:3000/sign-in?ticket=one-use to sign in to the console as argo.');
+}
+`, { mode: 0o755 });
+  await writeFile(join(path, 'bin/xdg-open'), `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
+writeFileSync('opened-link', process.argv[2]);
+`, { mode: 0o755 });
+  await writeFile(join(path, 'package.json'), '{"type":"module"}');
+  return {
+    path,
+    async run(command, input = '', env = {}) {
+      const child = spawn(process.execPath, [script, ...command], {
+        cwd: path, env: { ...process.env, PATH: `${path}/bin:${process.env.PATH}`, DISPLAY: '', WAYLAND_DISPLAY: '', SSH_CONNECTION: 'test', ...env },
+      });
+      let output = '';
+      child.stdout.on('data', data => { output += data; });
+      child.stderr.on('data', data => { output += data; });
+      child.stdin.end(input);
+      const timer = setTimeout(() => child.kill(), 5000);
+      const code = await new Promise(resolve => child.on('close', resolve));
+      clearTimeout(timer);
+      return { code, output };
+    },
+    async settings() { return parseEnv(await readFile(join(path, '.env'), 'utf8')); },
+    async commands() { return (await readFile(join(path, 'commands'), 'utf8')).trim().split('\n').map(JSON.parse); },
+  };
+}
+
+for (const [name, args] of [['Enter', []], ['--yes', ['--yes']]]) test(`init accepts ${name} defaults without printing generated secrets`, async t => {
+  // Given a fresh folder and the approved defaults.
+  const folder = await aFolder(t);
+  // When init accepts the defaults.
+  const result = await folder.run(['init', ...args], '\n\n\n\n');
+  // Then the chosen profiles and container URLs are recorded, with private secrets.
+  assert.equal(result.code, 0, result.output);
+  const env = await folder.settings();
+  assert.equal(env.COMPOSE_PROFILES, 'postgres,squadrons,trierarch-plugin');
+  assert.match(env.DATABASE_URL, /^postgresql:\/\/aeolus:[^@]+@postgres:5432\/aeolus$/);
+  assert.equal(env.AEOLUS_SQUADRONS_URL, 'http://squadrons:4100');
+  assert.equal(env.AEOLUS_TRIERARCH_PLUGIN_URL, 'http://trierarch-plugin:4200');
+  assert.equal(env.AEOLUS_GATEWAY_URL, '');
+  for (const key of ['POSTGRES_PASSWORD', 'CORE_DB_PASSWORD', 'SQUADRONS_DB_PASSWORD', 'TRIERARCH_PLUGIN_DB_PASSWORD', 'GATEWAY_DB_PASSWORD']) {
+    assert.ok(env[key].length >= 32);
+    assert.ok(!result.output.includes(env[key]));
+  }
+});
+
+for (const [name, args, input] of [['Enter', [], '\n\n\n\n'], ['--yes', ['--yes'], '']]) test(`init treats a .env without COMPOSE_PROFILES as new and takes the approved defaults on ${name}`, async t => {
+  // Given a .env copied from .env.example, as the old README said, holding one secret.
+  const folder = await aFolder(t);
+  await writeFile(join(folder.path, '.env'), (await readFile('.env.example', 'utf8')).replace('CORE_DB_PASSWORD=', 'CORE_DB_PASSWORD=kept-secret'));
+  // When init accepts the defaults.
+  const result = await folder.run(['init', ...args], input);
+  // Then it finishes with Postgres in the folder, squadrons and the trierarch plugin on, the gateway off, and the secret kept.
+  assert.equal(result.code, 0, result.output);
+  const env = await folder.settings();
+  assert.equal(env.COMPOSE_PROFILES, 'postgres,squadrons,trierarch-plugin');
+  assert.equal(env.CORE_DB_PASSWORD, 'kept-secret');
+  assert.match(env.DATABASE_URL, /^postgresql:\/\/aeolus:kept-secret@postgres:5432\/aeolus$/);
+  assert.equal(env.AEOLUS_GATEWAY_URL, '');
+});
+
+test('init --yes fails instead of waiting when an existing Postgres has no saved URL', async t => {
+  // Given a rerun whose profiles chose an existing Postgres and whose URL is missing.
+  const folder = await aFolder(t);
+  await writeFile(join(folder.path, '.env'), 'COMPOSE_PROFILES=squadrons\nDATABASE_URL=\n');
+  // When init runs with --yes.
+  const result = await folder.run(['init', '--yes']);
+  // Then it stops with an error naming the missing URL.
+  assert.equal(result.code, 1, result.output);
+  assert.match(result.output, /DATABASE_URL/);
+});
+
+test('rerun keeps secrets and custom settings while changing chosen plugins', async t => {
+  // Given an initialized folder with custom settings.
+  const folder = await aFolder(t);
+  await folder.run(['init', '--yes']);
+  await writeFile(join(folder.path, '.env'), (await readFile(join(folder.path, '.env'), 'utf8')) + '\nCUSTOM_SETTING=keep-me\n');
+  const before = await folder.settings();
+  // When the operator enables the gateway and disables squadrons.
+  const result = await folder.run(['init'], '\nn\n\ny\n');
+  // Then secrets and settings survive, while selected profiles change.
+  assert.equal(result.code, 0, result.output);
+  const after = await folder.settings();
+  for (const key of Object.keys(before).filter(key => key.endsWith('_PASSWORD') || (key.endsWith('_DATABASE_URL') && before[key]) || key === 'DATABASE_URL' || key === 'CUSTOM_SETTING')) assert.equal(after[key], before[key]);
+  assert.equal(after.COMPOSE_PROFILES, 'postgres,trierarch-plugin,gateway');
+  assert.equal(after.AEOLUS_SQUADRONS_URL, before.AEOLUS_SQUADRONS_URL);
+  assert.equal(after.AEOLUS_GATEWAY_URL, 'http://gateway:4300');
+  assert.ok(after.GATEWAY_SECRET.length >= 32);
+  await folder.run(['init', '--yes']);
+  assert.equal((await folder.settings()).GATEWAY_SECRET, after.GATEWAY_SECRET);
+  assert.ok(!result.output.includes(after.GATEWAY_SECRET));
+});
+
+test('rerun keeps a disabled plugin custom address', async t => {
+  // Given an initialized folder with a custom squadrons address.
+  const folder = await aFolder(t);
+  await folder.run(['init', '--yes']);
+  const path = join(folder.path, '.env');
+  await writeFile(path, (await readFile(path, 'utf8')).replace('http://squadrons:4100', 'https://custom.example/squadrons'));
+  // When the operator disables squadrons.
+  const result = await folder.run(['init'], '\nn\n\n\n');
+  // Then its custom address remains saved.
+  assert.equal(result.code, 0, result.output);
+  const env = await folder.settings();
+  assert.equal(env.AEOLUS_SQUADRONS_URL, 'https://custom.example/squadrons');
+  assert.equal(env.COMPOSE_PROFILES, 'postgres,trierarch-plugin');
+});
+
+test('existing Postgres takes a separate URL for each selected part', async t => {
+  // Given databases on an existing server.
+  const folder = await aFolder(t);
+  // When the operator chooses external Postgres and all plugins.
+  const result = await folder.run(['init'], 'existing\ny\ny\ny\npostgresql://core:private@db/core\npostgresql://sq:private@db/sq\npostgresql://tr:private@db/tr\npostgresql://gw:private@db/gw\n');
+  // Then URLs are saved privately without the postgres profile.
+  assert.equal(result.code, 0, result.output);
+  const env = await folder.settings();
+  assert.equal(env.COMPOSE_PROFILES, 'squadrons,trierarch-plugin,gateway');
+  assert.equal(env.DATABASE_URL, 'postgresql://core:private@db/core');
+  assert.equal(env.GATEWAY_DATABASE_URL, 'postgresql://gw:private@db/gw');
+  assert.ok(!result.output.includes(':private@'));
+});
+
+test('switching to folder Postgres keeps saved database URLs', async t => {
+  // Given an existing Postgres with separate saved URLs for the selected parts.
+  const folder = await aFolder(t);
+  const urls = {
+    DATABASE_URL: 'postgresql://core:private@db/core',
+    SQUADRONS_DATABASE_URL: 'postgresql://sq:private@db/sq',
+    TRIERARCH_PLUGIN_DATABASE_URL: 'postgresql://tr:private@db/tr',
+  };
+  await writeFile(join(folder.path, '.env'), `COMPOSE_PROFILES=squadrons,trierarch-plugin\n${Object.entries(urls).map(([key, value]) => `${key}=${value}`).join('\n')}\n`);
+  // When the operator switches to Postgres in the folder.
+  const result = await folder.run(['init'], 'folder\n\n\n\n');
+  // Then the saved URLs remain unchanged and the Postgres profile is enabled.
+  assert.equal(result.code, 0, result.output);
+  const env = await folder.settings();
+  for (const [key, value] of Object.entries(urls)) assert.equal(env[key], value);
+  assert.equal(env.COMPOSE_PROFILES, 'postgres,squadrons,trierarch-plugin');
+});
+
+for (const existing of [false, true]) test(`start ${existing ? 'existing' : 'new'} fleet waits for health and prints sign-in and plugin guidance`, async t => {
+  // Given a configured fleet and core's health endpoint.
+  const folder = await aFolder(t);
+  await folder.run(['init', '--yes']);
+  let healthRequests = 0;
+  const server = createServer((request, response) => { healthRequests++; response.writeHead(healthRequests === 1 ? 503 : 200).end(); });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  await writeFile(join(folder.path, '.env'), (await readFile(join(folder.path, '.env'), 'utf8')).replace('PUBLIC_URL=http://localhost:4000', `PUBLIC_URL=http://127.0.0.1:${server.address().port}`));
+  // When start builds the stack and fleet:init returns the appropriate result.
+  const result = await folder.run(['start'], '', existing ? { INIT_CODE: '3' } : {});
+  // Then health is awaited and the right link and Settings guidance are printed.
+  assert.equal(result.code, 0, result.output);
+  assert.ok(healthRequests >= 2);
+  assert.match(result.output, existing ? /http:\/\/localhost:3000\/sign-in(?:\s|$)/ : /http:\/\/localhost:3000\/sign-in\?ticket=one-use/);
+  assert.match(result.output, /Settings/);
+  assert.match(result.output, /http:\/\/squadrons:4100/);
+  assert.match(result.output, /Join a machine/);
+  const commands = await folder.commands();
+  assert.deepEqual(commands[0], ['compose', 'up', '-d', '--build']);
+  assert.ok(commands[1].includes('fleet:init'));
+  assert.ok(!commands.some(command => command.includes('sign-in')));
+});
+
+test('sign-in prints a fresh link', async t => {
+  // Given an initialized folder.
+  const folder = await aFolder(t);
+  await folder.run(['init', '--yes']);
+  // When sign-in is run.
+  const result = await folder.run(['sign-in']);
+  // Then a fresh link is shown.
+  assert.equal(result.code, 0, result.output);
+  assert.match(result.output, /ticket=one-use/);
+  assert.deepEqual(await folder.commands(), [['compose', 'exec', '-T', 'core', 'aeolus-core', 'sign-in']]);
+});
+
+test('stop keeps volumes', async t => {
+  // Given an initialized folder.
+  const folder = await aFolder(t);
+  await folder.run(['init', '--yes']);
+  // When stop is run.
+  const result = await folder.run(['stop']);
+  // Then Compose stops without deleting volumes.
+  assert.equal(result.code, 0, result.output);
+  assert.deepEqual(await folder.commands(), [['compose', 'down']]);
+});
+
+test('start propagates a fleet:init failure without opening a sign-in page', async t => {
+  // Given core is healthy but fleet:init fails.
+  const folder = await aFolder(t);
+  await folder.run(['init', '--yes']);
+  const server = createServer((request, response) => response.end());
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  await writeFile(join(folder.path, '.env'), (await readFile(join(folder.path, '.env'), 'utf8')).replace('PUBLIC_URL=http://localhost:4000', `PUBLIC_URL=http://127.0.0.1:${server.address().port}`));
+  // When start receives an ordinary failure.
+  const result = await folder.run(['start'], '', { INIT_CODE: '1' });
+  // Then it fails without claiming the fleet already exists.
+  assert.equal(result.code, 1);
+  assert.ok(!result.output.includes('http://localhost:3000/sign-in'));
+});
+
+
+for (const [name, session] of [
+  ['a desktop opens a browser', { DISPLAY: ':1', SSH_CONNECTION: '', opens: true }],
+  ['an SSH session only prints the link', { DISPLAY: ':1', SSH_CONNECTION: 'remote', opens: false }],
+  ['a headless host only prints the link', { DISPLAY: '', SSH_CONNECTION: '', opens: false }],
+]) test(`sign-in on ${name}`, async t => {
+  // Given an initialized folder on this kind of session.
+  const folder = await aFolder(t);
+  await folder.run(['init', '--yes']);
+  // When sign-in issues its link.
+  const result = await folder.run(['sign-in'], '', session);
+  // Then the link is printed and only the desktop opens a browser.
+  assert.equal(result.code, 0, result.output);
+  assert.match(result.output, /http:\/\/localhost:3000\/sign-in\?ticket=one-use/);
+  await new Promise(resolve => setTimeout(resolve, 200));
+  const opened = await readFile(join(folder.path, 'opened-link'), 'utf8').catch(() => null);
+  assert.equal(opened, session.opens ? 'http://localhost:3000/sign-in?ticket=one-use' : null);
+});
+
+test('start names the enabled gateway and explains that Bridge waits for self-hosted sign-in', async t => {
+  // Given a folder with the optional gateway selected.
+  const folder = await aFolder(t);
+  await folder.run(['init'], '\n\n\ny\n');
+  const server = createServer((request, response) => response.end());
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  await writeFile(join(folder.path, '.env'), (await readFile(join(folder.path, '.env'), 'utf8')).replace('PUBLIC_URL=http://localhost:4000', `PUBLIC_URL=http://127.0.0.1:${server.address().port}`));
+  // When start finishes.
+  const result = await folder.run(['start']);
+  // Then Settings has the gateway address and the self-hosted sign-in limitation is clear.
+  assert.equal(result.code, 0, result.output);
+  assert.match(result.output, /Connect Gateway under Settings: http:\/\/gateway:4300/);
+  assert.match(result.output, /Bridge and chats wait for the self-hosted sign-in/);
+});

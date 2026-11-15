@@ -1,60 +1,40 @@
 # aeolus-fleet-selfhost
 
-Run an Aeolus fleet with Docker Compose, using images built from the published npm packages. Core and the console always run. Squadrons, the trierarch plugin, the gateway and Postgres are optional Compose profiles.
-
-## Prerequisites
-
-- Docker with Docker Compose and access to the published npm packages when building images.
-- A Postgres database for core and a separate database for each enabled plugin, with a separate LOGIN owner for each. Alternatively, use the `postgres` profile to create them.
-- Addresses reachable by browsers, ships and plugins. The Compose ports bind to `127.0.0.1`, so remote access needs routing to those ports.
-
-## Configure
-
-Copy the example and edit `.env`:
-
 ```sh
-cp .env.example .env
+git clone https://github.com/ThomasHendrickx/aeolus-fleet-selfhost.git && cd aeolus-fleet-selfhost
+npm run init
+npm start
 ```
 
-Keep the version pins from the example. Set `PUBLIC_URL` to the core address reachable by browsers, ships **and containers**, including the enabled plugins. The example `http://localhost:4000` refers to each container itself when used inside a container; use an address reachable from the containers as well as clients. Set `CONSOLE_ORIGIN` to the console's browser-facing origin.
+You need git, Node (with `node:util.parseEnv`, Node 22.16 or later), and Docker with Docker Compose. No `npm install` is needed to run the setup. Images install the published npm packages while building.
 
-Set `DATABASE_URL` to core's Postgres connection URL. For each enabled plugin, set its separate `SQUADRONS_DATABASE_URL`, `TRIERARCH_PLUGIN_DATABASE_URL` or `GATEWAY_DATABASE_URL`. Set the corresponding `AEOLUS_SQUADRONS_URL`, `AEOLUS_TRIERARCH_PLUGIN_URL` or `AEOLUS_GATEWAY_URL` to its address as seen by the console. The example lists Compose service addresses. For the gateway, also set `GATEWAY_PUBLIC_URL` to its public address and `GATEWAY_SECRET` to a permanent secret of at least 32 characters.
+Init asks whether to run Postgres in this folder or use an existing server, then whether to enable squadrons, the trierarch plugin and the gateway. Enter accepts each default: Postgres in the folder, squadrons and the trierarch plugin on, gateway off. `npm run init -- --yes` accepts defaults without questions. On a rerun the saved choices are the defaults.
 
-For the `postgres` profile, set `POSTGRES_PASSWORD` and all four owner passwords: `CORE_DB_PASSWORD`, `SQUADRONS_DB_PASSWORD`, `TRIERARCH_PLUGIN_DB_PASSWORD` and `GATEWAY_DB_PASSWORD`. The initializer creates all four owners and databases even if only core is enabled. Use `postgres:5432` as the database host and port in connection URLs, with the matching owner, password and database. URL-encode passwords in those URLs. The example contains the database names and a connection URL pattern.
+Init writes `.env` with generated passwords, container database URLs, plugin addresses and `COMPOSE_PROFILES`. Keep this file private and back it up alongside the databases. A rerun keeps passwords, secrets and custom settings, changing the parts you choose. An existing Postgres needs a separate database and LOGIN owner for each enabled part; init asks for each connection URL. These URLs must be reachable from the containers, so `localhost` refers to the container itself.
 
-## Start
+Start builds and starts Compose, waits for core's `/health`, and initializes a new fleet named My fleet. Change the name later in the console. It prints argo's one-use sign-in link (valid for 15 minutes), opening it when a desktop is available. On a server, copy the printed link into a browser with a tunnel to localhost. For an existing fleet it opens the console's sign-in page, keeping any current argo sign-in active.
 
-Start core and the console with an external Postgres:
+Start prints each enabled plugin's address to connect under **Settings**. Answer agents in the console's operator inbox. The trierarch plugin runs on the server; use **Join a machine** in the console to join a prepared computer. With the gateway enabled, Bridge and chats wait for the self-hosted sign-in service.
 
-```sh
-docker compose up -d --build
-```
-
-Add profiles as needed. Each command also starts core and the console; combine `--profile` flags to run multiple profiles, including `postgres` alongside plugins:
+## Sign in and stop
 
 ```sh
-docker compose --profile postgres up -d --build
-docker compose --profile squadrons up -d --build
-docker compose --profile trierarch-plugin up -d --build
-docker compose --profile gateway up -d --build
+npm run sign-in
+npm stop
 ```
 
-Check the services and their health status with the same profile flags used to start them:
+Sign-in prints and opens a fresh argo link, ending any other argo sign-in. Stop runs `docker compose down`, keeping database volumes.
 
-```sh
-docker compose ps
-```
+## Configure and operate
 
-Core and console health checks use `/health`; the plugin checks use `/api/health`. Postgres uses `pg_isready`.
+Core and the console always run. Squadrons, the trierarch plugin, the gateway and Postgres are optional profiles. `.env` records them in `COMPOSE_PROFILES`, so ordinary `docker compose up -d --build`, `docker compose ps` and `docker compose logs` use the same choices.
 
-## Upgrade
+All published ports bind to `127.0.0.1`. `PUBLIC_URL` and `CONSOLE_ORIGIN` are the browser-facing addresses, defaulting to localhost ports 4000 and 3000. Plugins reach core at `http://core:4000` inside Compose; the console reaches plugins at their Compose service addresses. Remote access needs your proxy and reachable public addresses. See the [self-host guide](https://github.com/ThomasHendrickx/aeolus-fleet/blob/main/docs/guide/self-host.md) for public addresses, first sign-in and plugin setup.
 
-Bump the relevant version pin in `.env.example`, copy that pin into `.env`, then rebuild and start the stack with the same profile flags:
+The `postgres` profile creates all four database owners on its first boot, including disabled plugins. Keep the generated passwords permanently. Enabling a plugin later reuses its saved password. The gateway also requires a permanent `GATEWAY_SECRET`, generated when first enabled.
 
-```sh
-docker compose up -d --build
-```
+For upgrades, copy the released version pins from `.env.example` into `.env`, then run `npm start`. Init preserves your saved pins and settings. Core's distinct existing-fleet exit code requires core 0.40.0 or later; older core versions refuse a second initialization as a general failure. `.env.example` is the source of the exact published versions, updated separately for each release.
 
-For first sign-in and the rest of the self-hosting setup, see the [self-host guide](https://github.com/ThomasHendrickx/aeolus-fleet/blob/main/docs/guide/self-host.md). For operating services, databases, health, upgrades, backup and restore, see [run the server](https://github.com/ThomasHendrickx/aeolus-fleet/blob/main/docs/guide/run-the-server.md).
+For databases, health, upgrades, backup and restore, see [run the server](https://github.com/ThomasHendrickx/aeolus-fleet/blob/main/docs/guide/run-the-server.md). Core and console health checks use `/health`; plugins use `/api/health`.
 
-Contributing: see [CLAUDE.md](CLAUDE.md).
+Contributing: see [CLAUDE.md](CLAUDE.md). The setup scenarios run with `npm run test:setup` using only Node built-ins. The repository's check tooling needs its development dependencies.
