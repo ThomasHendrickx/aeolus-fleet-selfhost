@@ -71,7 +71,7 @@ async function init(args) {
     if (enabled.some(plugin => plugin.profile === 'gateway')) env.GATEWAY_SECRET ||= secret();
     for (const plugin of plugins) {
       const key = `AEOLUS_${plugin.prefix}_URL`;
-      env[key] = enabled.includes(plugin) ? env[key] || `http://${plugin.profile}:${plugin.port}` : '';
+      if (enabled.includes(plugin)) env[key] ||= `http://${plugin.profile}:${plugin.port}`;
     }
     env.COMPOSE_PROFILES = [...(database === 'folder' ? ['postgres'] : []), ...enabled.map(plugin => plugin.profile)].join(',');
     // Preserve comments, unrelated settings and existing values byte for byte.
