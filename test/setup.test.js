@@ -141,6 +141,24 @@ test('existing Postgres takes a separate URL for each selected part', async t =>
   assert.ok(!result.output.includes(':private@'));
 });
 
+test('switching to folder Postgres keeps saved database URLs', async t => {
+  // Given an existing Postgres with separate saved URLs for the selected parts.
+  const folder = await aFolder(t);
+  const urls = {
+    DATABASE_URL: 'postgresql://core:private@db/core',
+    SQUADRONS_DATABASE_URL: 'postgresql://sq:private@db/sq',
+    TRIERARCH_PLUGIN_DATABASE_URL: 'postgresql://tr:private@db/tr',
+  };
+  await writeFile(join(folder.path, '.env'), `COMPOSE_PROFILES=squadrons,trierarch-plugin\n${Object.entries(urls).map(([key, value]) => `${key}=${value}`).join('\n')}\n`);
+  // When the operator switches to Postgres in the folder.
+  const result = await folder.run(['init'], 'folder\n\n\n\n');
+  // Then the saved URLs remain unchanged and the Postgres profile is enabled.
+  assert.equal(result.code, 0, result.output);
+  const env = await folder.settings();
+  for (const [key, value] of Object.entries(urls)) assert.equal(env[key], value);
+  assert.equal(env.COMPOSE_PROFILES, 'postgres,squadrons,trierarch-plugin');
+});
+
 for (const existing of [false, true]) test(`start ${existing ? 'existing' : 'new'} fleet waits for health and prints sign-in and plugin guidance`, async t => {
   // Given a configured fleet and core's health endpoint.
   const folder = await aFolder(t);
