@@ -5,6 +5,8 @@ import { createInterface } from 'node:readline';
 import { parseArgs, parseEnv } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 
+class SetupError extends Error {}
+
 const plugins = [
   { profile: 'squadrons', label: 'Squadrons', prefix: 'SQUADRONS', port: 4100, database: 'aeolus_squadrons' },
   { profile: 'trierarch-plugin', label: 'Trierarch plugin', prefix: 'TRIERARCH_PLUGIN', port: 4200, database: 'aeolus_trierarch_plugin' },
@@ -27,7 +29,7 @@ async function init(args) {
     if (values.yes) return fallback;
     process.stdout.write(`${prompt} [${fallback}]: `);
     const answer = await answers.next();
-    if (answer.done) throw new Error('Input ended. Run npm run init -- --yes to accept defaults.');
+    if (answer.done) throw new SetupError('Input ended. Run npm run init -- --yes to accept defaults.');
     return answer.value.trim() || fallback;
   };
   try {
@@ -90,7 +92,7 @@ async function init(args) {
 
 function compose(args, capture = false) {
   const result = spawnSync('docker', ['compose', ...args], { encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit' });
-  if (result.error) throw new Error('Could not run Docker Compose. Check Docker is installed and running.');
+  if (result.error) throw new SetupError('Could not run Docker Compose. Check Docker is installed and running.');
   return result;
 }
 
@@ -116,14 +118,14 @@ async function waitForHealth(env) {
     } catch { /* Core may still be starting. */ }
     await delay(1000);
   }
-  throw new Error('Core did not become healthy within 180 seconds. Check docker compose logs core.');
+  throw new SetupError('Core did not become healthy within 180 seconds. Check docker compose logs core.');
 }
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'init') return init(args);
-  if (!['start', 'sign-in', 'stop'].includes(command) || args.length) throw new Error('Usage: setup.js init [--yes] | start | sign-in | stop');
-  if (!existsSync('.env')) throw new Error('Run npm run init first.');
+  if (!['start', 'sign-in', 'stop'].includes(command) || args.length) throw new SetupError('Usage: setup.js init [--yes] | start | sign-in | stop');
+  if (!existsSync('.env')) throw new SetupError('Run npm run init first.');
   if (command === 'stop') { process.exitCode = compose(['down']).status ?? 1; return; }
   const env = readEnv('.env');
   if (command === 'start') {
@@ -142,7 +144,7 @@ async function main() {
     return;
   } else {
     const link = result.stdout.match(/Open (https?:\/\/\S+) to sign in/)?.[1];
-    if (!link) throw new Error('Core did not print a sign-in link. Run npm run sign-in to try again.');
+    if (!link) throw new SetupError('Core did not print a sign-in link. Run npm run sign-in to try again.');
     openLink(link);
     console.log('This argo sign-in link works once, for 15 minutes.');
   }
@@ -154,7 +156,7 @@ async function main() {
   }
 }
 
-main().catch(() => {
-  console.error('Setup could not complete. Check your configuration and Docker, then try again.');
+main().catch(error => {
+  console.error(error instanceof SetupError ? error.message : 'Setup could not complete. Check your configuration and Docker, then try again.');
   process.exitCode = 1;
 });

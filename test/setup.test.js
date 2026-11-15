@@ -21,6 +21,10 @@ if (process.argv.includes('fleet:init') || process.argv.includes('sign-in')) {
   console.log('Open http://localhost:3000/sign-in?ticket=one-use to sign in to the console as argo.');
 }
 `, { mode: 0o755 });
+  await writeFile(join(path, 'bin/xdg-open'), `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
+writeFileSync('opened-link', process.argv[2]);
+`, { mode: 0o755 });
   await writeFile(join(path, 'package.json'), '{"type":"module"}');
   return {
     path,
@@ -72,7 +76,7 @@ test('rerun keeps secrets and custom settings while changing chosen plugins', as
   // Then secrets and settings survive, while selected profiles change.
   assert.equal(result.code, 0, result.output);
   const after = await folder.settings();
-  for (const key of Object.keys(before).filter(key => key.endsWith('_PASSWORD') || (key.endsWith('_DATABASE_URL') && before[key]) || key === 'CUSTOM_SETTING')) assert.equal(after[key], before[key]);
+  for (const key of Object.keys(before).filter(key => key.endsWith('_PASSWORD') || (key.endsWith('_DATABASE_URL') && before[key]) || key === 'DATABASE_URL' || key === 'CUSTOM_SETTING')) assert.equal(after[key], before[key]);
   assert.equal(after.COMPOSE_PROFILES, 'postgres,trierarch-plugin,gateway');
   assert.equal(after.AEOLUS_SQUADRONS_URL, '');
   assert.equal(after.AEOLUS_GATEWAY_URL, 'http://gateway:4300');
@@ -147,4 +151,41 @@ test('start propagates a fleet:init failure without opening a sign-in page', asy
   // Then it fails without claiming the fleet already exists.
   assert.equal(result.code, 1);
   assert.ok(!result.output.includes('http://localhost:3000/sign-in'));
+});
+
+
+test('sign-in opens a browser on a desktop and always prints the link on SSH or headless hosts', async t => {
+  for (const session of [
+    { DISPLAY: ':1', SSH_CONNECTION: '', opens: true },
+    { DISPLAY: ':1', SSH_CONNECTION: 'remote', opens: false },
+    { DISPLAY: '', SSH_CONNECTION: '', opens: false },
+  ]) {
+    // Given an initialized folder on a desktop, SSH session or headless host.
+    const folder = await aFolder(t);
+    await folder.run(['init', '--yes']);
+    // When sign-in issues its link.
+    const result = await folder.run(['sign-in'], '', session);
+    // Then every session sees the link and only the desktop opens a browser.
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /http:\/\/localhost:3000\/sign-in\?ticket=one-use/);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const opened = await readFile(join(folder.path, 'opened-link'), 'utf8').catch(() => null);
+    assert.equal(opened, session.opens ? 'http://localhost:3000/sign-in?ticket=one-use' : null);
+  }
+});
+
+test('start names the enabled gateway and explains that Bridge waits for self-hosted sign-in', async t => {
+  // Given a folder with the optional gateway selected.
+  const folder = await aFolder(t);
+  await folder.run(['init'], '\n\n\ny\n');
+  const server = createServer((request, response) => response.end());
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  await writeFile(join(folder.path, '.env'), (await readFile(join(folder.path, '.env'), 'utf8')).replace('PUBLIC_URL=http://localhost:4000', `PUBLIC_URL=http://127.0.0.1:${server.address().port}`));
+  // When start finishes.
+  const result = await folder.run(['start']);
+  // Then Settings has the gateway address and the self-hosted sign-in limitation is clear.
+  assert.equal(result.code, 0, result.output);
+  assert.match(result.output, /Connect Gateway under Settings: http:\/\/gateway:4300/);
+  assert.match(result.output, /Bridge and chats wait for the self-hosted sign-in/);
 });
