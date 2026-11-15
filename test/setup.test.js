@@ -104,12 +104,27 @@ test('rerun keeps secrets and custom settings while changing chosen plugins', as
   const after = await folder.settings();
   for (const key of Object.keys(before).filter(key => key.endsWith('_PASSWORD') || (key.endsWith('_DATABASE_URL') && before[key]) || key === 'DATABASE_URL' || key === 'CUSTOM_SETTING')) assert.equal(after[key], before[key]);
   assert.equal(after.COMPOSE_PROFILES, 'postgres,trierarch-plugin,gateway');
-  assert.equal(after.AEOLUS_SQUADRONS_URL, '');
+  assert.equal(after.AEOLUS_SQUADRONS_URL, before.AEOLUS_SQUADRONS_URL);
   assert.equal(after.AEOLUS_GATEWAY_URL, 'http://gateway:4300');
   assert.ok(after.GATEWAY_SECRET.length >= 32);
   await folder.run(['init', '--yes']);
   assert.equal((await folder.settings()).GATEWAY_SECRET, after.GATEWAY_SECRET);
   assert.ok(!result.output.includes(after.GATEWAY_SECRET));
+});
+
+test('rerun keeps a disabled plugin custom address', async t => {
+  // Given an initialized folder with a custom squadrons address.
+  const folder = await aFolder(t);
+  await folder.run(['init', '--yes']);
+  const path = join(folder.path, '.env');
+  await writeFile(path, (await readFile(path, 'utf8')).replace('http://squadrons:4100', 'https://custom.example/squadrons'));
+  // When the operator disables squadrons.
+  const result = await folder.run(['init'], '\nn\n\n\n');
+  // Then its custom address remains saved.
+  assert.equal(result.code, 0, result.output);
+  const env = await folder.settings();
+  assert.equal(env.AEOLUS_SQUADRONS_URL, 'https://custom.example/squadrons');
+  assert.equal(env.COMPOSE_PROFILES, 'postgres,trierarch-plugin');
 });
 
 test('existing Postgres takes a separate URL for each selected part', async t => {
