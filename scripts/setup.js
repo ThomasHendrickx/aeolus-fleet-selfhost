@@ -22,7 +22,8 @@ async function init(args) {
   const env = { ...saved };
   const quote = value => value.includes("'") ? JSON.stringify(value) : `'${value}'`;
   const previousProfiles = new Set((env.COMPOSE_PROFILES ?? '').split(','));
-  const isRerun = existsSync('.env');
+  // Only a .env that init wrote holds COMPOSE_PROFILES; an older one takes the new-folder defaults.
+  const isRerun = existsSync('.env') && 'COMPOSE_PROFILES' in saved;
   const lines = createInterface({ input: process.stdin, terminal: false });
   const answers = lines[Symbol.asyncIterator]();
   const ask = async (prompt, fallback) => {
@@ -62,6 +63,7 @@ async function init(args) {
           // Never echo a saved URL or offer it as a visible default.
           url = await ask(`${key} for existing Postgres${env[key] ? ' (Enter keeps saved URL)' : ''}`, '');
           url ||= env[key];
+          if (values.yes && !/^postgres(?:ql)?:\/\//.test(url ?? '')) throw new SetupError(`${key} is missing or invalid. Set it in .env, or run npm run init to answer.`);
         } while (!url || !/^postgres(?:ql)?:\/\//.test(url));
         env[key] = url;
       }
