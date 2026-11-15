@@ -85,7 +85,7 @@ services:
       HOST: 0.0.0.0
       PORT: "4100"
       DATABASE_URL: ${SQUADRONS_DATABASE_URL:-}
-      FLEET_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+      FLEET_URL: http://core:4000
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4100/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
       interval: 10s
@@ -114,7 +114,7 @@ services:
       HOST: 0.0.0.0
       PORT: "4200"
       DATABASE_URL: ${TRIERARCH_PLUGIN_DATABASE_URL:-}
-      FLEET_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+      FLEET_URL: http://core:4000
       CONSOLE_ORIGIN: ${CONSOLE_ORIGIN:?Set CONSOLE_ORIGIN in .env}
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4200/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
@@ -142,7 +142,7 @@ services:
       HOST: 0.0.0.0
       PORT: "4300"
       DATABASE_URL: ${GATEWAY_DATABASE_URL:-}
-      FLEET_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+      FLEET_URL: http://core:4000
       GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:-http://localhost:4300}
       GATEWAY_SECRET: ${GATEWAY_SECRET:-}
     healthcheck:

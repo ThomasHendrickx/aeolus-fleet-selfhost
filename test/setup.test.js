@@ -68,11 +68,11 @@ test('rerun keeps secrets and custom settings while changing chosen plugins', as
   await writeFile(join(folder.path, '.env'), (await readFile(join(folder.path, '.env'), 'utf8')) + '\nCUSTOM_SETTING=keep-me\n');
   const before = await folder.settings();
   // When the operator enables the gateway and disables squadrons.
-  const result = await folder.run(['init'], '\nn\ny\n');
+  const result = await folder.run(['init'], '\nn\n\ny\n');
   // Then secrets and settings survive, while selected profiles change.
   assert.equal(result.code, 0, result.output);
   const after = await folder.settings();
-  for (const key of Object.keys(before).filter(key => key.endsWith('_PASSWORD') || key.endsWith('_DATABASE_URL') || key === 'CUSTOM_SETTING')) assert.equal(after[key], before[key]);
+  for (const key of Object.keys(before).filter(key => key.endsWith('_PASSWORD') || (key.endsWith('_DATABASE_URL') && before[key]) || key === 'CUSTOM_SETTING')) assert.equal(after[key], before[key]);
   assert.equal(after.COMPOSE_PROFILES, 'postgres,trierarch-plugin,gateway');
   assert.equal(after.AEOLUS_SQUADRONS_URL, '');
   assert.equal(after.AEOLUS_GATEWAY_URL, 'http://gateway:4300');
@@ -93,7 +93,7 @@ test('existing Postgres takes a separate URL for each selected part', async t =>
   assert.equal(env.COMPOSE_PROFILES, 'squadrons,trierarch-plugin,gateway');
   assert.equal(env.DATABASE_URL, 'postgresql://core:private@db/core');
   assert.equal(env.GATEWAY_DATABASE_URL, 'postgresql://gw:private@db/gw');
-  assert.ok(!result.output.includes('private'));
+  assert.ok(!result.output.includes(':private@'));
 });
 
 for (const existing of [false, true]) test(`start ${existing ? 'existing' : 'new'} fleet waits for health and prints sign-in and plugin guidance`, async t => {

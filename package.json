@@ -3,12 +3,17 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "init": "node scripts/setup.js init",
+    "start": "node scripts/setup.js start",
+    "sign-in": "node scripts/setup.js sign-in",
+    "stop": "node scripts/setup.js stop",
+    "test:setup": "node --test test/setup.test.js",
     "check": "npm run check:compose && npm run check:pins && npm run check:syntax && npm run check:no-em-dash",
     "check:compose": "node scripts/check-compose.js",
     "check:pins": "node scripts/check-pins.js",
     "check:syntax": "node scripts/check-syntax.js",
     "check:no-em-dash": "node scripts/check-no-em-dash.js",
-    "test": "node --test --test-concurrency=1 test/stack.test.js",
+    "test": "node --test --test-concurrency=1 test/stack.test.js test/setup.test.js",
     "test:base": "node --test --test-name-pattern='^base stack$' test/stack.test.js",
     "test:profiles": "node --test --test-name-pattern='^all profiles$' test/stack.test.js"
   },
