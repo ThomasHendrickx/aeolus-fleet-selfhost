@@ -56,7 +56,7 @@ async function init(args) {
     for (const part of parts) {
       const key = part.prefix ? `${part.prefix}_DATABASE_URL` : 'DATABASE_URL';
       if (database === 'folder') {
-        if (!env[key] || (isRerun && !previousProfiles.has('postgres'))) env[key] = `postgresql://${part.database}:${encodeURIComponent(env[part.password])}@postgres:5432/${part.database}`;
+        if (!env[key]) env[key] = `postgresql://${part.database}:${encodeURIComponent(env[part.password])}@postgres:5432/${part.database}`;
       } else {
         let url;
         do {
